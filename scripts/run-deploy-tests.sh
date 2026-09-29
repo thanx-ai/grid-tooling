@@ -44,13 +44,17 @@ if ! [[ "$RETRIES" =~ ^[0-9]+$ ]]; then
   echo "::error::DEPLOY_TEST_RETRIES (deploy.yml input test_retries) must be a non-negative integer, got '$RETRIES'" >&2
   exit 1
 fi
-if ! [[ "$RETRY_DELAY" =~ ^[0-9]+$ ]]; then
-  echo "::error::DEPLOY_TEST_RETRY_DELAY_SECONDS (deploy.yml input test_retry_delay_seconds) must be a non-negative integer, got '$RETRY_DELAY'" >&2
-  exit 1
-fi
 # Base 10: a leading zero ("08") must not be read as octal.
 RETRIES=$((10#$RETRIES))
-RETRY_DELAY=$((10#$RETRY_DELAY))
+# The delay only matters with retries on; deploy.yml documents it as ignored
+# at 0, so don't fail a retries-off run over it.
+if (( RETRIES > 0 )); then
+  if ! [[ "$RETRY_DELAY" =~ ^[0-9]+$ ]]; then
+    echo "::error::DEPLOY_TEST_RETRY_DELAY_SECONDS (deploy.yml input test_retry_delay_seconds) must be a non-negative integer, got '$RETRY_DELAY'" >&2
+    exit 1
+  fi
+  RETRY_DELAY=$((10#$RETRY_DELAY))
+fi
 
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"

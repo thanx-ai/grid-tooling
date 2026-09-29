@@ -21,17 +21,24 @@
 # What counts as a local import (line-based scan of each `.ts` script):
 #   import ... from "./x.ts"   export { ... } from "../x.ts"   export * from "./x.ts"
 #   import "./x.ts"            import ... from "/f/<folder>/x.ts"  (workspace-absolute)
-#   ... including multi-line `import {\n a,\n} from "./x.ts"` clauses.
+#   ... including multi-line `import {\n a,\n} from "./x.ts"` clauses, and
+#   a dynamic import with a literal specifier anywhere on a line:
+#   `await import("./x.ts")`, `() => import("./x.ts").then(...)`. The
+#   bundler behind the lock build follows those like static imports (a
+#   specifier held in a variable, `import(MOD)`, it can't see, and neither
+#   can this scan).
 # An extensionless "./x" resolves to x.ts. Only imports that resolve to
 # another `.ts` script record in the stream create an ordering edge.
-# Ignored: `import type` / `export type` (erased before bundling — counting
-# them would turn the usual type-only back-reference into a false cycle),
-# dynamic `import()`, bare / npm: / URL specifiers, `//` comments, and
-# anything that doesn't resolve to a `.ts` script record (e.g. a `.sql`
-# asset). The scan assumes one import statement per line start (what every
-# formatter emits); an import inside a /* block comment */ or a template
-# string still counts — that only adds an ordering constraint, never drops
-# one.
+# Ignored, because they are erased before bundling (counting them would
+# turn the usual type-only back-reference into a false cycle):
+# `import type` / `export type`, a brace list whose every specifier is
+# `type X` (`import { type A, type B } from`), and type positions
+# `typeof import("./x.ts")` / `import("./x.ts").SomeType`. Also ignored:
+# bare / npm: / URL specifiers, `//` comments, and anything that doesn't
+# resolve to a `.ts` script record (e.g. a `.sql` asset). The scan assumes
+# one import statement per line start (what every formatter emits); an
+# import inside a /* block comment */ or a template string still counts —
+# that only adds an ordering constraint, never drops one.
 #
 # Order: the lexicographically-smallest topological order — the next `.ts`
 # script pushed is the alphabetically-first one whose local imports have all
@@ -58,7 +65,11 @@ set -euo pipefail
 # bytes) and identical behaviour across macOS awk, mawk and gawk.
 bom=$'\xef\xbb\xbf'
 
-awk_prog="$(cat <<'AWK'
+# `read -d ''` rather than "$(cat <<'AWK' ...)": macOS /bin/bash 3.2 can't
+# parse a quoted heredoc holding unbalanced quotes inside $(...), and the
+# preview (`bash scripts/list-grid-items.sh`) should run there too. read
+# returns 1 at the end of the heredoc, hence `|| true`.
+IFS= read -r -d '' awk_prog <<'AWK' || true
 BEGIN {
   FS = "\t"
   nrec = 0; nnode = 0; last_slot = 0
@@ -84,6 +95,28 @@ function is_type_only(s) {
   if (s !~ /^[ \t]*(import|export)[ \t]+type([ \t{*]|$)/) return 0
   if (s ~ /^[ \t]*import[ \t]+type[ \t]+from[ \t]*["']/) return 0
   return 1
+}
+
+# `import { type A, type B } from` / `export { type A } from`: a brace list
+# with no default or namespace binding whose every specifier is `type X`
+# (joined multi-line clauses included). Erased like `import type`. The one
+# exception is `{ type as X }`, a VALUE binding named `type`.
+function all_inline_type(s,    body, n, items, i, it, seen) {
+  if (s !~ /^[ \t]*(import|export)[ \t]*\{[^}]*\}[ \t]*from[ \t]*["']/) return 0
+  body = s
+  sub(/^[ \t]*(import|export)[ \t]*\{/, "", body)
+  sub(/\}.*$/, "", body)
+  n = split(body, items, ",")
+  seen = 0
+  for (i = 1; i <= n; i++) {
+    it = items[i]
+    sub(/^[ \t]+/, "", it); sub(/[ \t]+$/, "", it)
+    if (it == "") continue
+    if (it !~ /^type[ \t]+[A-Za-z0-9_$]/) return 0
+    if (it ~ /^type[ \t]+as[ \t]+[A-Za-z0-9_$]+$/) return 0
+    seen++
+  }
+  return seen > 0
 }
 
 # A line that can begin a value import/re-export we care about.
@@ -134,7 +167,8 @@ function resolve(importer, spec,    p, n, i, parts, out, m, seg) {
   return p
 }
 
-function add_import(k, s,    spec, p, d) {
+function add_import(k, s,    spec) {
+  if (all_inline_type(s)) return
   if (match(s, /from[ \t]*["'][^"']*["']/)) {
     spec = substr(s, RSTART, RLENGTH)
     sub(/^from[ \t]*["']/, "", spec)
@@ -145,6 +179,31 @@ function add_import(k, s,    spec, p, d) {
     return
   }
   sub(/["']$/, "", spec)
+  add_spec(k, spec)
+}
+
+# Literal dynamic imports anywhere on a (comment-stripped) line. Skipped:
+# `foo.import(` / `reimport(` (not the keyword), and the erased type
+# positions `typeof import("./x")` and `import("./x").SomeType` (a member
+# access other than then/catch/finally).
+function scan_dynamic(k, s,    rest, m, before, after, spec) {
+  rest = s
+  while (match(rest, /import[ \t]*\([ \t]*["'][^"']*["'][ \t]*\)/)) {
+    m = substr(rest, RSTART, RLENGTH)
+    before = substr(rest, 1, RSTART - 1)
+    after = substr(rest, RSTART + RLENGTH)
+    rest = after
+    if (before ~ /[A-Za-z0-9_$.]$/) continue
+    if (before ~ /typeof[ \t]*$/) continue
+    if (after ~ /^[ \t]*\.[ \t]*[A-Za-z_$]/ && after !~ /^[ \t]*\.[ \t]*(then|catch|finally)([^A-Za-z0-9_$]|$)/) continue
+    spec = m
+    sub(/^import[ \t]*\([ \t]*["']/, "", spec)
+    sub(/["'][ \t]*\)$/, "", spec)
+    add_spec(k, spec)
+  }
+}
+
+function add_spec(k, spec,    p, d) {
   p = resolve(node_path[k], spec)
   if (p == "") return
   if (!(p in node_of) && ((p ".ts") in node_of)) p = p ".ts"
@@ -162,6 +221,7 @@ function scan_file(k,    file, line, rc, stmt, collecting, nlines, first) {
   while ((rc = (getline line < file)) > 0) {
     if (first) { first = 0; if (substr(line, 1, 3) == BOM) line = substr(line, 4) }
     sub(/\r$/, "", line)
+    if (index(line, "import")) scan_dynamic(k, strip_line_comment(line))
     if (line ~ /^[ \t]*(import|export)([^A-Za-z0-9_$]|$)/) {
       # A new statement: salvage an unterminated previous one, then decide
       # whether this one is worth collecting.
@@ -269,6 +329,5 @@ END {
   }
 }
 AWK
-)"
 
 LC_ALL=C awk -v BOM="$bom" "$awk_prog"

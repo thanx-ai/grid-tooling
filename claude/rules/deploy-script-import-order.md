@@ -18,8 +18,8 @@ What the lock build needs is only for the imported file to **exist** on the work
 
 `scripts/order-by-imports.sh` runs between the classifier and the push loop (`list-grid-items.sh` → `classify-grid-paths.sh | order-by-imports.sh`). Within the runnables tier it:
 
-- scans each `.ts` script for **value** imports of another `.ts` script in the repo: `import … from`, `export … from`, side-effect `import "./x.ts"`, multi-line clauses, and extensionless `./x`, which resolves to `x.ts`;
-- **ignores** `import type` / `export type`, dynamic `import()`, `//` comments, bare/npm/URL specifiers, and anything that isn't a `.ts` script record (a `.sql` asset, a `.js` helper);
+- scans each `.ts` script for **value** imports of another `.ts` script in the repo: `import … from`, `export … from`, side-effect `import "./x.ts"`, multi-line clauses, extensionless `./x` (which resolves to `x.ts`), and **dynamic imports with a literal specifier** (`await import("./x.ts")`, `() => import("./x.ts").then(…)`), because the lock build's bundler follows those too. A specifier held in a variable (`import(MOD)`) is invisible to both the bundler and this scan;
+- **ignores** type-only imports (`import type` / `export type`, a brace list whose every specifier is `type X`, and `typeof import("./x.ts")` / `import("./x.ts").SomeType`), `//` comments, bare/npm/URL specifiers, and anything that isn't a `.ts` script record (a `.sql` asset, a `.js` helper);
 - pushes in the **lexicographically-smallest topological order**: the next script is the alphabetically-first one whose imports have all been pushed. With no local imports that is exactly the old alphabetical order. Every non-`.ts` record, `.py`/`.js` scripts included, keeps its exact slot.
 
 Type-only imports are skipped on purpose, because the transpiler erases them before bundling. The common "`b.ts` does `import type { A } from './a.ts'` while `a.ts` value-imports `b.ts`" shape would otherwise look like a cycle. (Windmill's own import parser *does* list type-only imports for its dependency tracking. If a deploy ever shows a type-only import racing, look there first.)
@@ -33,5 +33,5 @@ The second push is **best-effort**. `wmill script push` skips a script whose con
 ## How to verify
 
 - The deploy run's **Push all Grid items** log opens with `Will push N item(s):` in push order. Every importer should appear below what it imports. If the repo has local imports, there is also a one-line `order-by-imports:` summary, plus a `::warning::` per cycle. To preview the order without deploying, run `bash <grid-tooling checkout>/scripts/list-grid-items.sh` from the project repo's root. It only reads files.
-- In `thanx-ai/grid-tooling`, the offline tests are `scripts/test/order-by-imports-test.sh` and `scripts/test/list-grid-items-test.sh`. The first covers import shapes, the type-only / dynamic / comment exclusions, slot preservation, cycles, and an end-to-end run through `deploy-grid-items.sh` with a fake `wmill`.
+- In `thanx-ai/grid-tooling`, the offline tests are `scripts/test/order-by-imports-test.sh` and `scripts/test/list-grid-items-test.sh`. The first covers import shapes (dynamic imports included), the type-only / comment exclusions, slot preservation, cycles, and an end-to-end run through `deploy-grid-items.sh` with a fake `wmill`.
 - A deploy test that 404s or reports `No matching export` right after a first push points at this ordering, not at your test.

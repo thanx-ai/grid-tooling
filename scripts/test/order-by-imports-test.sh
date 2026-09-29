@@ -8,8 +8,10 @@
 #   - value imports order the importee first: relative, `../`, extensionless,
 #     multi-line, side-effect, `export ... from`, workspace-absolute `/f/`,
 #     BOM + CRLF files, and transitive chains;
-#   - type-only imports, dynamic import(), `//` comments, `.js` / `.sql` /
-#     missing / out-of-tree targets create NO edge;
+#   - literal dynamic import("./x.ts") orders the importee first too;
+#   - type-only imports (`import type`, all-`type` brace lists, `typeof
+#     import()` / `import().T`), `//` comments, `.js` / `.sql` / missing /
+#     out-of-tree targets create NO edge;
 #   - every non-`.ts` record (other types AND .py/.js scripts) keeps its slot;
 #   - a cycle stays alphabetical, its members are re-emitted right after the
 #     last .ts script (before tier 2), and a ::warning:: names it;
@@ -95,9 +97,26 @@ put lib/fmt.ts  'import * as wmill from "windmill-client";\nexport const fmt = (
 put b_types.ts  'import type { Row } from "./y_rows.ts";\nexport type { Row } from "./y_rows.ts";\nimport type {\n  Other,\n} from "./y_rows.ts";\nimport type * as NS from "./y_rows.ts";\nexport type Local = Row;\n'"$main_fn"
 put y_rows.ts   'import { helper } from "./b_types.ts";\nexport type Row = { id: number };\nexport type Other = Row;\n'"$main_fn"
 
-# Dynamic import: no edge (c_dyn stays before x_dyn).
+# Inline `type` specifiers erase like `import type`: oa_util's back-references
+# to ba_inline are all-type brace lists (single-line, re-export, multi-line),
+# so ba_inline -> oa_util is the only edge and there is no cycle.
+put ba_inline.ts 'import { util } from "./oa_util.ts";\nexport type Config = { a: number };\n'"$main_fn"
+put oa_util.ts   'import { type Config } from "./ba_inline.ts";\nexport { type Config } from "./ba_inline.ts";\nimport {\n  type Config as C2, // aliased\n  type Config as C3,\n} from "./ba_inline.ts";\nexport const util = 1;\n'"$main_fn"
+# ...but a brace list holding any value specifier still counts, and so does
+# `{ type as X }` (a value binding named `type`).
+put ca_mixed.ts  'import { type A, helper } from "./qa_mixed.ts";\n'"$main_fn"
+put qa_mixed.ts  'export type A = 1;\nexport const helper = 1;\n'"$main_fn"
+put da_typeas.ts 'import { type as tp } from "./pa_typeas.ts";\n'"$main_fn"
+put pa_typeas.ts 'export const type = 1;\n'"$main_fn"
+
+# Literal dynamic imports count (the lock build's bundler follows them):
+# mid-line, and inside an arrow with .then(). Type positions don't.
 put c_dyn.ts    'export async function main() { const m = await import("./x_dyn.ts"); return m }\n'
 put x_dyn.ts    "$main_fn"
+put ea_lazy.ts  'const load = () => import("./ta_lazy.ts").then((m) => m.main);\n'"$main_fn"
+put ta_lazy.ts  "$main_fn"
+put fa_typepos.ts 'type NS = typeof import("./ua_typepos.ts");\nlet x: import("./ua_typepos.ts").Foo;\nconst MOD = "./ua_typepos.ts";\nconst late = () => import(MOD);\n'"$main_fn"
+put ua_typepos.ts 'export type Foo = 1;\n'"$main_fn"
 
 # Multi-line value import through `../eng/`, with a comment holding `;` and
 # a quote inside the clause.
@@ -205,13 +224,22 @@ check "type-only back-reference is not a cycle (b_types pushed once)" \
   test "$(count "$(rec f/eng/b_types.ts)")" -eq 1
 not_contains() { ! grep -qF -- "$1" <<<"$2"; }
 check "type-only back-reference: no warning about it" not_contains b_types "$err"
-check "dynamic import() ignored: c_dyn stays before x_dyn"     before f/eng/c_dyn.ts f/eng/x_dyn.ts
+check "dynamic import(): x_dyn before c_dyn"                   before f/eng/x_dyn.ts f/eng/c_dyn.ts
+check "dynamic import().then(): ta_lazy before ea_lazy"        before f/eng/ta_lazy.ts f/eng/ea_lazy.ts
+check "type-position import() and import(VAR) ignored: fa_typepos stays before ua_typepos" \
+  before f/eng/fa_typepos.ts f/eng/ua_typepos.ts
+check "all-type brace lists ignored: oa_util before ba_inline" before f/eng/oa_util.ts f/eng/ba_inline.ts
+check "all-type brace lists: no false cycle (ba_inline pushed once)" \
+  test "$(count "$(rec f/eng/ba_inline.ts)")" -eq 1
+check "all-type brace lists: no warning about them" not_contains ba_inline "$err"
+check "mixed { type A, helper } counts: qa_mixed before ca_mixed" before f/eng/qa_mixed.ts f/eng/ca_mixed.ts
+check "{ type as X } is a value import: pa_typeas before da_typeas" before f/eng/pa_typeas.ts f/eng/da_typeas.ts
 check "commented-out import ignored: h_comment before r_commented" before f/eng/h_comment.ts f/eng/r_commented.ts
 
 # Unconstrained scripts keep alphabetical order among themselves.
-free_order="$(grep -E $'^script\tf/eng/(c_dyn|h_comment|i_js|r_commented|x_dyn)\\.ts$' <<<"$out" | cut -f2 | tr '\n' ' ')"
+free_order="$(grep -E $'^script\tf/eng/(fa_typepos|h_comment|i_js|r_commented|ua_typepos)\\.ts$' <<<"$out" | cut -f2 | tr '\n' ' ')"
 check "unconstrained scripts stay alphabetical" \
-  test "$free_order" = "f/eng/c_dyn.ts f/eng/h_comment.ts f/eng/i_js.ts f/eng/r_commented.ts f/eng/x_dyn.ts "
+  test "$free_order" = "f/eng/fa_typepos.ts f/eng/h_comment.ts f/eng/i_js.ts f/eng/r_commented.ts f/eng/ua_typepos.ts "
 
 # The cycle: alphabetical, pushed twice, re-push right after the last .ts
 # slot (so before any schedule/trigger), warned about.

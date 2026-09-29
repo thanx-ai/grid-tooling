@@ -233,6 +233,9 @@ reset_state
 run_tests DEPLOY_TEST_RETRIES=1 DEPLOY_TEST_RETRY_DELAY_SECONDS=-5
 check "delay=-5: exit 1"                              is "$rc" 1
 check "delay=-5: says why"                            has "DEPLOY_TEST_RETRY_DELAY_SECONDS"
+reset_state
+run_tests DEPLOY_TEST_RETRIES=0 DEPLOY_TEST_RETRY_DELAY_SECONDS=1.5
+check "retries=0: the delay is ignored, as deploy.yml says" is "$rc" 0
 
 if [ "$fail" -ne 0 ]; then
   echo >&2
