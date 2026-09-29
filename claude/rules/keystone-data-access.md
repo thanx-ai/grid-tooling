@@ -25,7 +25,7 @@ A deployed Windmill flow/script can't call MCP — MCP is an agent-side transpor
 1. **Endpoint:** `POST https://keystone.thanx.com/api/v1/snowflake/query` (replicas: `POST https://keystone.thanx.com/api/v1/replica/query`).
 2. **Auth header:** `Authorization: Bearer <token>` — yes, Bearer.
 3. **Payload:** raw SQL, same shape as the MCP tool — `{"query": "...", "database": "ANALYTICS", "schema": "THANX"}`.
-4. **Response:** `{ "data": {...}, "metadata": {...} }`, PII already sanitized.
+4. **Response:** `{ "data": {...}, "metadata": {...} }`, PII already sanitized. **`data` is an envelope, not the row array** — it's shaped `{ schema, results, database, row_count, truncated, total_rows }`. **`data.results` is the actual array of rows.** Destructuring `data` and using it directly where a row array is expected silently produces empty/all-null results (a stuck loading spinner, or all-zero metrics) — this has already bitten one project repo in production, caught only by a live smoke test, not by local unit tests.
 
 Crib (TypeScript Windmill script; the thing a scheduled refresh flow runs):
 
@@ -49,9 +49,10 @@ export async function main(): Promise<void> {
   });
   if (!res.ok) throw new Error(`Keystone ${res.status}: ${await res.text()}`);
   const { data } = await res.json();
+  const rows = data?.results ?? []; // `data` is an envelope; `.results` is the row array — see note above
 
   // Cache for the app's loaders to read at runtime:
-  await wmill.setVariable("f/<scope>/your_dashboard_data", JSON.stringify(data));
+  await wmill.setVariable("f/<scope>/your_dashboard_data", JSON.stringify(rows));
 }
 ```
 
