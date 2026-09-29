@@ -25,6 +25,6 @@ It's tempting to make the deploy faster by pushing only changed items again. Don
 
 ## How to verify
 
-- `scripts/list-grid-items.sh` enumerates the full tracked `f/**` set (via `git ls-files`) through the shared classifier (`scripts/classify-grid-paths.sh`), in `wmill push` dependency order. `scripts/deploy-grid-items.sh` pipes it into `scripts/push-grid-items.sh`.
+- `scripts/list-grid-items.sh` enumerates the full tracked `f/**` set (via `git ls-files`) through the shared classifier (`scripts/classify-grid-paths.sh`), in `wmill push` dependency order. It then runs `scripts/order-by-imports.sh`, which pushes each bun script after the local files it imports (see [`deploy-script-import-order.md`](./deploy-script-import-order.md)). `scripts/deploy-grid-items.sh` pipes the result into `scripts/push-grid-items.sh`.
 - Covered offline by `scripts/test/list-grid-items-test.sh` (enumeration + untracked-file exclusion + dependency order), which runs in `self-test.yml` with no live workspace.
 - After a deploy, the run log lists every item pushed; unchanged `app`/`script` items log as up-to-date rather than a new version.

@@ -60,10 +60,12 @@ scripts/                # bash scripts invoked by reusable workflows
   lint-raw-apps.sh
   check-variable-references.sh
   classify-grid-paths.sh  # shared path->wmill-push-record classifier (stdin->stdout)
-  list-grid-items.sh      # full f/** inventory -> classify-grid-paths.sh
+  list-grid-items.sh      # full f/** inventory -> classify-grid-paths.sh -> order-by-imports.sh
+  order-by-imports.sh     # push each bun script after the local files it imports (stdin->stdout)
   push-grid-items.sh      # shared per-item `wmill <type> push` loop (stdin records)
   deploy-grid-items.sh    # deploy: list-grid-items.sh | push-grid-items.sh (full inventory)
-  run-deploy-tests.sh
+  run-deploy-tests.sh     # `// test:` deploy tests; opt-in retry of failures (test_retries)
+  test/*-test.sh          # offline behavioral tests (run by self-test.yml)
 skills/                 # plugin skills (/grid:setup, /grid:create, /grid:import)
   setup/                # one-time repo bootstrap (wmill.yaml, workflow caller, token, rules)
   create/               # scaffold a NEW raw_app, picking scope per app
@@ -74,8 +76,11 @@ skills/                 # plugin skills (/grid:setup, /grid:create, /grid:import
 
 ```bash
 # Verify a reusable-workflow change locally
-shellcheck scripts/*.sh
+shellcheck scripts/*.sh scripts/test/*.sh
 bash -n scripts/*.sh
+
+# Offline behavioral tests (what self-test.yml's script-tests job runs; bash 4+)
+for t in scripts/test/*-test.sh; do bash "$t" || echo "FAILED: $t"; done
 
 # After editing a workflow YAML, run actionlint:
 bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)

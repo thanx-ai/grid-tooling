@@ -21,6 +21,18 @@ name: Grid Deploy (reusable)
 # Never `wmill sync push` — that would let one project repo's deploy delete
 # items owned by another. See claude/rules/per-item-push-not-sync.md for the
 # design rationale and the verified CLI surface.
+#
+# Push order is dependency order: folders, then runnables/data (bun scripts
+# after the local files they import, so a first push never builds a lock
+# against a missing import — claude/rules/deploy-script-import-order.md),
+# then schedules/triggers.
+#
+# Optional, off by default: `test_retries` re-runs only the FAILED deploy
+# tests (after `test_retry_delay_seconds`) and annotates any test that passed
+# only on a retry, e.g.
+#
+#       with:
+#         test_retries: 2
 
 on:
   workflow_call:
@@ -41,6 +53,14 @@ on:
         type: boolean
         default: false
         description: Skip the post-push deploy tests. Use sparingly — tests are how we catch regressions.
+      test_retries:
+        type: number
+        default: 0
+        description: Re-run only the FAILED deploy tests up to this many extra rounds before failing the job. A test that passes only on a retry still passes but gets a warning annotation so the flake stays visible; one that fails every attempt fails the job as before. 0 (default) means no retries, the original behaviour.
+      test_retry_delay_seconds:
+        type: number
+        default: 30
+        description: Seconds to wait before each test_retries round (lets a cold or busy worker recover). Ignored when test_retries is 0.
     secrets:
       WINDMILL_DEPLOY_TOKEN:
         required: true
@@ -95,4 +115,6 @@ jobs:
         if: ${{ !inputs.skip_tests }}
         env:
           WINDMILL_DEPLOY_TOKEN: ${{ secrets.WINDMILL_DEPLOY_TOKEN }}
+          DEPLOY_TEST_RETRIES: ${{ inputs.test_retries }}
+          DEPLOY_TEST_RETRY_DELAY_SECONDS: ${{ inputs.test_retry_delay_seconds }}
         run: bash .grid-meta/scripts/run-deploy-tests.sh

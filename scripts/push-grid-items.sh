@@ -23,8 +23,11 @@
 # CLI surface this loops over.
 #
 # Records must already be in `wmill push` dependency order (folders, then
-# runnables/data, then schedule/trigger) — this script pushes them in the
-# order received and does not re-sort. The producer owns ordering.
+# runnables/data, then schedule/trigger; bun scripts after the local files
+# they import) — this script pushes them in the order received and does not
+# re-sort or dedupe. The producer owns ordering. A record can legitimately
+# appear twice: order-by-imports.sh re-emits the members of an import cycle
+# so they are pushed again once every member exists; the log marks those.
 
 set -euo pipefail
 
@@ -55,6 +58,7 @@ wmill_common=(
 )
 
 failed=()
+declare -A pushed=()
 for entry in "${entries[@]}"; do
   # Skip blank lines defensively (a trailing newline from the producer
   # would otherwise become an empty record and trip the unknown-type arm).
@@ -62,7 +66,13 @@ for entry in "${entries[@]}"; do
   # Split the TAB-separated record. Empty arg2 is fine for app/script/folder.
   IFS=$'\t' read -r type arg1 arg2 <<<"$entry"
 
-  echo "▶ wmill $type push $arg1${arg2:+ $arg2}"
+  again=""
+  if [ -n "${pushed[$entry]+set}" ]; then
+    again="  (again: import-cycle second push, see claude/rules/deploy-script-import-order.md)"
+  fi
+  pushed[$entry]=1
+
+  echo "▶ wmill $type push $arg1${arg2:+ $arg2}$again"
   case "$type" in
     app)
       # `wmill app push` with a single arg walks the .raw_app/ dir and

@@ -45,6 +45,10 @@ export async function main(): Promise<{ ok: true; customer_count: number }> {
 
 In-process call, no nested job, no deadlock — and the test is faster to boot because there's only one bundle compile.
 
+The direct import is also why the deploy pushes the imported script before the test: the test's lock build needs `./load_customer_cube_overview.ts` to exist on the workspace (see [`deploy-script-import-order.md`](./deploy-script-import-order.md)).
+
+Don't reach for `deploy.yml`'s `test_retries` input to paper over this. A deadlocked test 504s on every attempt, so retries only multiply the 5-minute wait. `test_retries` is for genuinely transient failures, like a cold worker or an upstream blip, and a test that passes only on a retry is still annotated as flaky.
+
 ## How to verify
 
 After pushing a test script (`wmill script push <path>` from your laptop, or via the deploy workflow), hit `run_wait_result/p/<test_path>` and inspect the queue:

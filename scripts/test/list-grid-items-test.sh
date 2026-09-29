@@ -7,7 +7,8 @@
 #     repo (the whole point of full-inventory deploy: an item that missed an
 #     earlier deploy window must still show up and get pushed);
 #   - records come out in `wmill push` dependency order (folder first,
-#     runnables before schedule/trigger);
+#     runnables before schedule/trigger, a bun script after the local file
+#     it imports — see order-by-imports-test.sh for the import cases);
 #   - untracked / ignored files are NOT enumerated (they never deploy, so
 #     the deploy must not try to push them).
 #
@@ -37,6 +38,9 @@ summary: eng folder
 YAML
 echo 'export function main() {}' >f/eng/summary_email.ts
 echo 'export function main() {}' >f/eng/summary_email_test.ts
+# Sorts BEFORE the script it imports; the inventory must still push the
+# imported file first (its lock build needs the import to exist).
+printf 'import { main as send } from "./summary_email.ts";\nexport function main() { return send() }\n' >f/eng/aaa_report.ts
 echo '{}' >f/eng/widget.raw_app/app.yaml
 echo 'summary: a flow' >f/eng/pipeline.flow/flow.yaml
 cat >f/eng/conn.resource.yaml <<'YAML'
@@ -99,6 +103,7 @@ check "enumerates the app"      has_record "$(printf 'app\tf/eng/widget.raw_app'
 check "enumerates the flow"     has_record "$(printf 'flow\tf/eng/pipeline.flow\tf/eng/pipeline')"
 check "enumerates the script"   has_record "$(printf 'script\tf/eng/summary_email.ts')"
 check "enumerates the test"     has_record "$(printf 'script\tf/eng/summary_email_test.ts')"
+check "enumerates the importer" has_record "$(printf 'script\tf/eng/aaa_report.ts')"
 check "enumerates the resource" has_record "$(printf 'resource\tf/eng/conn.resource.yaml\tf/eng/conn')"
 check "enumerates the variable" has_record "$(printf 'variable\tf/eng/token.variable.yaml\tf/eng/token')"
 check "enumerates the schedule" has_record "$(printf 'schedule\tf/eng/summary_email_daily.schedule.yaml\tf/eng/summary_email_daily')"
@@ -123,6 +128,13 @@ for runnable in script app flow resource variable; do
   check "$runnable before schedule"   test "$rp" -lt "$schedule_pos"
   check "$runnable before trigger"    test "$rp" -lt "$trigger_pos"
 done
+
+# Import order: the imported script is pushed before its importer, even
+# though the importer sorts first.
+record_pos() { grep -nxF -m1 -- "$1" <<<"$out" | cut -d: -f1; }
+imported_pos="$(record_pos "$(printf 'script\tf/eng/summary_email.ts')")"
+importer_pos="$(record_pos "$(printf 'script\tf/eng/aaa_report.ts')")"
+check "imported script before its importer" test "$imported_pos" -lt "$importer_pos"
 
 if [ "$fail" -ne 0 ]; then
   echo >&2
