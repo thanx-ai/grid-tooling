@@ -50,6 +50,8 @@ done
 
 This matters because a repo routinely holds a script and its schedule (or a folder and its contents) together — the tooling must push them in the right order. A plain `sort -u` orders records lexically by type (`app, flow, folder, resource, schedule, script, trigger, variable`), which pushes `schedule` *before* `script` (and *before* `variable`) and lands `folder` in the middle: the schedule push 404s on a runnable that doesn't exist yet and reds the whole deploy. The fix is a tier-ranked stable sort at the end of `classify-grid-paths.sh`; don't regress it back to a bare `sort -u`. It's covered by `scripts/test/list-grid-items-test.sh`.
 
+The runnables tier (item 2 above) has one ordering constraint of its own. A bun script's lock build resolves its relative imports against the workspace, so the `.ts` scripts it imports must be pushed first. The classifier never opens files, so `list-grid-items.sh` pipes its output through `scripts/order-by-imports.sh`. That script reorders only the `.ts` script records (topologically, alphabetical tie-break). Import cycles get a second push and a warning. See [`deploy-script-import-order.md`](./deploy-script-import-order.md). It's covered by `scripts/test/order-by-imports-test.sh`.
+
 ## What about `wmill sync push` for local dev?
 
 `wmill sync push --dry-run` (without `--yes`) is still useful for local diffing. The rule is specifically about the CI deploy step. If you need to bulk-sync from your laptop, you're doing it knowingly and the destructive scope is on you.

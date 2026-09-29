@@ -13,7 +13,28 @@ This repo is **not** where Grid code lives. It's the shared infrastructure that 
 Two workflows under `.github/workflows/` that project repos call via `uses:` from their own `.github/workflows/grid.yml`:
 
 - **`ci.yml`** — lints every `.raw_app/`, validates that every literal `wmill.getVariable("f/...")` reference resolves in the prod workspace.
-- **`deploy.yml`** — pushes the **full `f/**` inventory** every master deploy, one item at a time with `wmill <type> push` (`app`, `script`, `flow`, `resource`, `variable`, `schedule`, `trigger`, `folder`). `wmill push` content-hashes each item and no-ops the unchanged ones, so a full push is cheap — and because every deploy pushes everything, an item that ever missed its deploy window self-heals on the next run with no commit-range bookkeeping. Each push is an upsert: it creates or updates the remote item but **never deletes**. Then executes deploy tests. See [`claude/rules/per-item-push-not-sync.md`](./claude/rules/per-item-push-not-sync.md) for why this isn't `wmill sync push`, and [`claude/rules/deploy-full-inventory.md`](./claude/rules/deploy-full-inventory.md) for why we push everything (and the workspace-edits-get-reverted tradeoff).
+- **`deploy.yml`** — pushes the **full `f/**` inventory** every master deploy, one item at a time with `wmill <type> push` (`app`, `script`, `flow`, `resource`, `variable`, `schedule`, `trigger`, `folder`). `wmill push` content-hashes each item and no-ops the unchanged ones, so a full push is cheap — and because every deploy pushes everything, an item that ever missed its deploy window self-heals on the next run with no commit-range bookkeeping. Each push is an upsert: it creates or updates the remote item but **never deletes**. Items go out in dependency order: folders, then runnables/data, then schedules/triggers. Each bun script is pushed **after the local files it imports**, so its first lock build doesn't run against a missing import (import cycles excepted; see [`claude/rules/deploy-script-import-order.md`](./claude/rules/deploy-script-import-order.md)). Then executes deploy tests. See [`claude/rules/per-item-push-not-sync.md`](./claude/rules/per-item-push-not-sync.md) for why this isn't `wmill sync push`, and [`claude/rules/deploy-full-inventory.md`](./claude/rules/deploy-full-inventory.md) for why we push everything (and the workspace-edits-get-reverted tradeoff).
+
+#### Optional `deploy.yml` inputs
+
+| Input                      | Default                           | What it does                                                                                                                                                                                                                                                                            |
+| -------------------------- | --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `test_retries`             | `0`                               | Re-run **only the failed** deploy tests up to N more rounds before failing the job. A test that passes only on a retry still passes, but gets a `::warning::` annotation so the flake stays visible. A test that fails every attempt fails the job exactly as before. `0` = no retries. |
+| `test_retry_delay_seconds` | `30`                              | Pause before each retry round.                                                                                                                                                                                                                                                          |
+| `skip_tests`               | `false`                           | Skip deploy tests entirely. Use sparingly.                                                                                                                                                                                                                                              |
+| `base_url` / `workspace`   | `grid-origin.thanx.com` / `thanx` | Target Windmill instance and workspace.                                                                                                                                                                                                                                                 |
+| `wmill_version`            | `1.700.1`                         | `windmill-cli` version installed for the push.                                                                                                                                                                                                                                          |
+
+```yaml
+  deploy:
+    uses: thanx-ai/grid-tooling/.github/workflows/deploy.yml@master
+    with:
+      test_retries: 2   # for tests that hit a flaky upstream; flakes still get annotated
+    secrets:
+      WINDMILL_DEPLOY_TOKEN: ${{ secrets.WINDMILL_DEPLOY_TOKEN }}
+```
+
+Retries are for transient failures, not a fix for a deterministic 504. A test that deadlocks on a nested job fails every attempt (see [`claude/rules/deploy-test-no-nested-job.md`](./claude/rules/deploy-test-no-nested-job.md)).
 
 ### 2. The `grid` Claude Code plugin
 

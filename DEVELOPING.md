@@ -29,6 +29,16 @@ You do **not** need:
 - A local Windmill instance (the meta-repo doesn't run scripts itself).
 - A `wmill` CLI install (it's installed inside the reusable workflows at runtime).
 
+## Offline script tests
+
+`scripts/test/*-test.sh` are behavioral tests for the deploy scripts. They build throwaway git repos and put fake `wmill` / `curl` / `sleep` binaries on `PATH`, so they never touch a workspace. `self-test.yml` runs every one of them (its `script-tests` job). Run them locally before pushing:
+
+```bash
+for t in scripts/test/*-test.sh; do bash "$t" || echo "FAILED: $t"; done
+```
+
+They need bash 4+ (`push-grid-items.sh` uses `mapfile`). On macOS, `brew install bash` and make sure it's first on `PATH`. A change to push order (`classify-grid-paths.sh`, `order-by-imports.sh`) or to deploy-test handling (`run-deploy-tests.sh`) should come with a case in the matching test. The tests prove the scripts' logic. They don't replace the `grid-shared` end-to-end run below, which is the only check against a live workspace.
+
 ## Iterating on a reusable workflow
 
 The self-test workflow (`self-test.yml`) only catches YAML and shell syntax errors. Semantic regressions (checkout pattern, ref resolution, lint behavior) only show up against a real caller. The dev loop:

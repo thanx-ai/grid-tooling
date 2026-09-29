@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Enumerate EVERY deployable Grid item tracked in the repo (the full f/**
 # inventory), classified into `wmill <type> push` records in dependency
-# order (folder first; then runnables/data; then schedule/trigger).
+# order (folder first; then runnables/data; then schedule/trigger), with
+# bun scripts pushed after the local files they import.
 #
 # Usage:
 #   scripts/list-grid-items.sh
@@ -16,8 +17,10 @@
 # must never show up in the inventory.
 #
 # Output: see scripts/classify-grid-paths.sh — one TAB-separated record
-# per line, deduped, in `wmill push` dependency order. Empty (exit 0) when
-# the repo has no f/** content.
+# per line, deduped, in `wmill push` dependency order — then
+# scripts/order-by-imports.sh moves each `.ts` script after the local files
+# it imports (and re-emits the members of an import cycle once more; see
+# that script). Empty (exit 0) when the repo has no f/** content.
 
 set -euo pipefail
 
@@ -31,6 +34,9 @@ repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 
 # `git ls-files -- 'f/**'` lists tracked files under the Grid namespace.
-# Pipe into the shared classifier (dependency order + dedup).
+# Pipe into the shared classifier (dependency order + dedup), then order the
+# bun scripts by their local imports. order-by-imports.sh opens the script
+# files relative to the cwd, which is the repo root (cd above).
 git ls-files -- 'f/**' \
-  | bash "$here/classify-grid-paths.sh"
+  | bash "$here/classify-grid-paths.sh" \
+  | bash "$here/order-by-imports.sh"

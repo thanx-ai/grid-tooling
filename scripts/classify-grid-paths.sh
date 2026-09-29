@@ -13,7 +13,9 @@
 # Output: one TAB-separated record per line, deduped and emitted in
 # `wmill push` dependency order (folders first; then runnables and
 # standalone data — script/app/flow/resource/variable; then the items
-# that reference them — schedule/trigger):
+# that reference them — schedule/trigger). Lexical within a tier;
+# list-grid-items.sh then pipes this through order-by-imports.sh to push
+# bun scripts after the local files they import:
 #   <type>\t<arg1>[\t<arg2>]
 # where the args match what `wmill <type> push` expects:
 #   app       <local-path-to-.raw_app-dir>
@@ -138,9 +140,13 @@ done | sort -u | awk -F'\t' '
   #     validates the target script_path exists, so they must come AFTER
   #     the script/app/flow they point at.
   # Assign a dependency tier per type, then stable-sort by (tier, record).
-  # Within a tier there are no cross-deps the push validates, so lexical
-  # order is purely for determinism. Unknown types default to tier 1 (the
-  # middle), matching deploy-grid-items.sh, which errors on them anyway.
+  # Within a tier the push validates no cross-deps, so lexical order here is
+  # for determinism — with one exception this filter cannot see (it never
+  # opens files): a bun script whose lock build needs the local files it
+  # imports to exist first. order-by-imports.sh, run after this by
+  # list-grid-items.sh, reorders tier-1 `.ts` scripts for that. Unknown
+  # types default to tier 1 (the middle), matching deploy-grid-items.sh,
+  # which errors on them anyway.
   BEGIN {
     rank["folder"]   = 0
     rank["script"]   = 1; rank["app"]     = 1; rank["flow"] = 1
