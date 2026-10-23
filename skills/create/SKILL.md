@@ -45,7 +45,20 @@ Use `AskUserQuestion` to collect (one question at a time):
 
 If a path collision exists (e.g. `<SCOPE>/merchant_health.script.ts` already exists and the user wants `merchant_health` as the app name), warn — Windmill allows both at the same path but it's confusing. Suggest a disambiguated name.
 
-## Step 3: Ensure the parent folder is set up
+## Step 3: Pre-flight for external-system writes (conditional)
+
+If any backend runnable named in Step 2 writes to an external system (Salesforce, Slack, Gmail, or similar — not just reading/aggregating internal data), stop and ask the user these four questions via `AskUserQuestion` before scaffolding anything:
+
+1. **What can this touch?** Which systems, objects, or scopes can the runnable write to?
+2. **What is the blast radius if it is wrong?** What happens downstream if this writes bad data or fires more than intended?
+3. **Does it have a stable idempotency/dedup key?** Not an auto-generated ID that only exists after the write — a stable identifier (email, thread ID, external record ID) that exists before the write happens.
+4. **Who reviews its failures, and how often?** A named owner and a cadence, not "someone will notice."
+
+Worked example of what happens when this is skipped: a downstream consumer of this plugin had a draft-dedup bug where the check keyed on a new draft's own ID — a value that does not exist until after the write — instead of a stable identifier. Two unattended jobs silently re-created the same draft every run, accumulating hundreds of duplicates over months before anyone noticed. Full writeup lives in that project's own knowledge base (`context/knowledge/cos-architecture.md` in `chris-ai-workspace`, "Known issues") — not reproduced here since it is specific to that repo.
+
+Record the answers in a short "Blast radius" note in the app's own `raw_app.yaml` description or a comment in the relevant `backend/<id>.yaml`, so the next person reading the app sees them too. If no backend runnable writes externally, skip this step.
+
+## Step 4: Ensure the parent folder is set up
 
 Apps under `f/<scope>/` need a `folder.meta.yaml` at `f/<scope>/folder.meta.yaml` so the Grid knows the folder's permissions. If it doesn't exist yet, scaffold one.
 
@@ -87,7 +100,7 @@ owners:
 
 If the SCIM group `g/<DEPT>` doesn't exist in Google Workspace yet, the dept's members won't have write access — the YAML grant is a no-op until provisioned. Request new groups in `#ai-help-desk`.
 
-## Step 4: Scaffold the files
+## Step 5: Scaffold the files
 
 Create the directory and files in this exact shape:
 
@@ -243,14 +256,14 @@ If the user specified no backend scripts, **do not skip** the `backend/` folder 
 
   **The moment the runnable body calls `wmill.*`** (`wmill.getVariable`, `wmill.getResource`, …), add `import * as wmill from "windmill-client";` as the first line of `content` — otherwise it throws `wmill is not defined` at runtime, and lint won't catch it. See `claude/rules/raw-app-windmill-client-import.md`. The empty `{ ok: true }` placeholder above doesn't need it.
 
-## Step 5: Lint and smoke-test
+## Step 6: Lint and smoke-test
 
 1. `wmill app lint <SCOPE>/<name>.raw_app` — must end with `✅ All checks passed`. Lint runs `npm install`, builds the esbuild bundle, and validates the wmill-virtual interception. Treat any `[WARNING]` as a blocker (CI does too).
 2. **For any new inline runnable**, also run `wmill app dev <SCOPE>/<name>.raw_app` and load `http://localhost:5173` in a browser. The lint accepts mis-shaped backend YAML silently; only the dev/runtime client rejects an inline runnable that's missing the `inlineScript:` wrapper (`claude/rules/raw-app-inline-runnable-yaml.md`) or a runnable body that calls `wmill.*` without `import * as wmill from "windmill-client"` (`claude/rules/raw-app-windmill-client-import.md`) — both lint clean and throw on first load.
    - `wmill app dev` needs a configured `local` workspace. If `wmill workspace list` is empty, see `claude/rules/local-windmill-dev.md` before running this step. Scripted setup is `wmill workspace add --create local dev http://localhost:8000/ --token "$TOKEN"` (mint `$TOKEN` via the auth-login + token-create curl pair documented there — the wmill CLI has no `--email --password` bootstrap).
    - If a runnable calls a service on your **host** machine, `wmill app dev` runs it in a container — `127.0.0.1` won't reach the host. Use `http://host.docker.internal:<port>` and bind the host service to `0.0.0.0`. See `claude/rules/raw-app-dev-host-networking.md`.
 
-## Step 6: Report
+## Step 7: Report
 
 Tell the user:
 
